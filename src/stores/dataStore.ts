@@ -7,7 +7,9 @@ import type {
   SummaryStats,
   ParticleState,
   TimeRange,
-  QuenchEvent
+  QuenchEvent,
+  QuenchPrediction,
+  HeaterEvent
 } from '@/types';
 import { ParticlePool } from '@/utils/particlePool';
 import type { PoolStatistics, ParticlePoolAPI } from '@/utils/particlePool';
@@ -30,6 +32,9 @@ export const useDataStore = defineStore('data', () => {
   const isLoading = ref(false);
   const error = ref<string | null>(null);
   const heatZoneTemperature = ref(77);
+  const quenchPredictions = ref<Record<string, QuenchPrediction>>({});
+  const heaterEvents = ref<HeaterEvent[]>([]);
+  const predictionSensorId = ref<string | null>(null);
 
   const particlePool = ref<ParticlePoolAPI | null>(null);
   const lastSummaryFetch = ref(0);
@@ -186,6 +191,48 @@ export const useDataStore = defineStore('data', () => {
     }
   }
 
+  async function fetchQuenchPrediction(
+    sensorId: string,
+    startTime: number,
+    endTime: number,
+    predictSeconds: number = 3.0
+  ) {
+    try {
+      const response = await axios.get(`${API_BASE}/quench-prediction`, {
+        params: {
+          start_time: startTime,
+          end_time: endTime,
+          sensor_id: sensorId,
+          predict_seconds: predictSeconds
+        }
+      });
+      const data = snakeToCamel(response.data) as QuenchPrediction;
+      quenchPredictions.value[sensorId] = data;
+      predictionSensorId.value = sensorId;
+      return data;
+    } catch (e) {
+      console.error('Failed to fetch quench prediction:', e);
+      return null;
+    }
+  }
+
+  async function fetchHeaterEvents(startTime: number, endTime: number) {
+    try {
+      const response = await axios.get(`${API_BASE}/heater-events`, {
+        params: { start_time: startTime, end_time: endTime }
+      });
+      heaterEvents.value = snakeToCamel(response.data.events);
+      return heaterEvents.value;
+    } catch (e) {
+      console.error('Failed to fetch heater events:', e);
+      return [];
+    }
+  }
+
+  function setPredictionSensor(sensorId: string | null) {
+    predictionSensorId.value = sensorId;
+  }
+
   function setCurrentTime(time: number) {
     currentTime.value = Math.max(
       timeRange.value.startTime,
@@ -229,9 +276,29 @@ export const useDataStore = defineStore('data', () => {
       await Promise.all([
         fetchTimeSeries(timeRange.value.startTime, timeRange.value.endTime),
         fetchQuenchEvents(timeRange.value.startTime, timeRange.value.endTime),
+        fetchHeaterEvents(timeRange.value.startTime, timeRange.value.endTime),
         fetchSummary(currentTime.value, true),
         fetchParticles(currentTime.value, 2500, true)
       ]);
+
+      if (quenchEvents.value.length > 0 && sensors.value.length > 0) {
+        const firstSensor = sensors.value[0]?.sensorId;
+        if (firstSensor) {
+          const firstQuench = quenchEvents.value.find(
+            q => q.sensorId === firstSensor
+          );
+          const predTime = firstQuench
+            ? Math.min(firstQuench.startTime + 0.5, timeRange.value.endTime)
+            : timeRange.value.startTime + 1;
+          await fetchQuenchPrediction(
+            firstSensor,
+            Math.max(0, predTime - 1),
+            predTime,
+            3.0
+          );
+          predictionSensorId.value = firstSensor;
+        }
+      }
     }
   }
 
@@ -259,12 +326,18 @@ export const useDataStore = defineStore('data', () => {
     activeSensors,
     boilingIntensity,
     particlePool,
+    quenchPredictions,
+    heaterEvents,
+    predictionSensorId,
     fetchSensors,
     fetchTimeRange,
     fetchTimeSeries,
     fetchSummary,
     fetchParticles,
     fetchQuenchEvents,
+    fetchQuenchPrediction,
+    fetchHeaterEvents,
+    setPredictionSensor,
     setCurrentTime,
     togglePlayback,
     setPlaybackSpeed,

@@ -135,6 +135,41 @@ async def get_cross_correlation(
     return result
 
 
+@app.get("/api/quench-hotspots")
+async def get_quench_hotspots(timestamp: float, window: float = Query(default=0.05, ge=0.001, le=1.0)):
+    hotspots = processor.detect_quench_hotspots(timestamp=timestamp, window=window)
+    return {
+        "timestamp": timestamp,
+        "hotspots": hotspots,
+        "count": len(hotspots)
+    }
+
+
+@app.get("/api/quench-prediction")
+async def get_quench_prediction(
+    start_time: float,
+    end_time: float,
+    sensor_id: str,
+    predict_seconds: float = Query(default=2.0, ge=0.1, le=10.0)
+):
+    prediction = processor.predict_quench_propagation(
+        start_time=start_time,
+        end_time=end_time,
+        sensor_id=sensor_id,
+        predict_seconds=predict_seconds
+    )
+    return prediction
+
+
+@app.get("/api/heater-events")
+async def get_heater_events(start_time: float, end_time: float):
+    events = processor.get_heater_events(start_time=start_time, end_time=end_time)
+    return {
+        "events": events,
+        "count": len(events)
+    }
+
+
 @app.websocket("/ws/stream")
 async def websocket_stream(websocket: WebSocket):
     await websocket.accept()

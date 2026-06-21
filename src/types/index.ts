@@ -53,6 +53,52 @@ export interface QuenchEvent {
   peakTemperature: number;
 }
 
+export interface PredictionPoint {
+  timestamp: number;
+  temperature: number;
+  resistivity: number;
+  tempUpper: number;
+  tempLower: number;
+  rhoUpper: number;
+  rhoLower: number;
+}
+
+export interface HeaterTrigger {
+  time: number;
+  temperature: number;
+  resistivity: number;
+  delayMs: number;
+  action: string;
+  severity: string;
+}
+
+export interface QuenchPrediction {
+  status: string;
+  sensorId?: string;
+  startTime?: number;
+  predictionSeconds?: number;
+  propagationVelocity?: number;
+  initialTemperature?: number;
+  initialResistivity?: number;
+  timeSeries?: PredictionPoint[];
+  heaterTrigger?: HeaterTrigger;
+  burnThrough?: { time: number; temperature: number; delayMs: number };
+  heaterDelayMs?: number;
+  burnDelayMs?: number;
+}
+
+export interface HeaterEvent {
+  sensorId: string;
+  triggerTime: number;
+  triggerTemperature: number;
+  triggerResistivity: number;
+  delayMs: number;
+  propagationVelocity: number;
+  burnThroughTime?: number;
+  severity: string;
+  action: string;
+}
+
 export interface GlobalState {
   currentTime: number;
   isPlaying: boolean;
