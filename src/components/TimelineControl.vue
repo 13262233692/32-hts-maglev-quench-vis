@@ -39,7 +39,7 @@ function handleProgressClick(event: MouseEvent) {
   const percent = (event.clientX - rect.left) / rect.width;
   const newTime = dataStore.timeRange.startTime + 
     percent * (dataStore.timeRange.endTime - dataStore.timeRange.startTime);
-  dataStore.setCurrentTime(newTime);
+  dataStore.seekTo(newTime);
 }
 
 function togglePlay() {

@@ -119,6 +119,22 @@ async def get_quench_events(start_time: float, end_time: float):
     return {"events": events}
 
 
+@app.get("/api/cross-correlation")
+async def get_cross_correlation(
+    start_time: float,
+    end_time: float,
+    voltage_sensor: str,
+    temperature_sensor: str
+):
+    result = processor.get_cross_correlation_summary(
+        start_time=start_time,
+        end_time=end_time,
+        voltage_sensor=voltage_sensor,
+        temperature_sensor=temperature_sensor
+    )
+    return result
+
+
 @app.websocket("/ws/stream")
 async def websocket_stream(websocket: WebSocket):
     await websocket.accept()

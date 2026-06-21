@@ -8,6 +8,8 @@ import { hexToRgba } from '@/utils/color';
 const containerRef = ref<HTMLElement | null>(null);
 const dimensions = ref({ width: 800, height: 600 });
 const dataStore = useDataStore();
+const particleRenderRaf = ref<number | null>(null);
+const lastRenderTime = ref(0);
 
 const deckGl = useDeckGl({
   container: containerRef.value,
@@ -30,6 +32,33 @@ const quenchAlertTextStyle = computed(() => ({
   fontFamily: FONTS.display
 }));
 
+const particleCountText = computed(() => {
+  const pool = dataStore.particlePool;
+  return pool ? pool.getActiveCount() : dataStore.particles.length;
+});
+
+function startParticleRenderLoop() {
+  function render(t: number) {
+    const dt = lastRenderTime.value ? (t - lastRenderTime.value) / 1000 : 0.016;
+    lastRenderTime.value = t;
+
+    const pool = dataStore.particlePool;
+    if (pool && pool.getActiveCount() > 0) {
+      deckGl.updateParticlesOnly(pool);
+    }
+
+    particleRenderRaf.value = requestAnimationFrame(render);
+  }
+  particleRenderRaf.value = requestAnimationFrame(render);
+}
+
+function stopParticleRenderLoop() {
+  if (particleRenderRaf.value) {
+    cancelAnimationFrame(particleRenderRaf.value);
+    particleRenderRaf.value = null;
+  }
+}
+
 function handleResize() {
   if (containerRef.value) {
     const rect = containerRef.value.getBoundingClientRect();
@@ -42,10 +71,12 @@ function handleResize() {
 }
 
 watch(
-  () => [dataStore.particles, dataStore.sensors, dataStore.heatZoneTemperature, dataStore.quenchDetected],
+  () => [dataStore.sensors, dataStore.heatZoneTemperature, dataStore.quenchDetected],
   () => {
+    const pool = dataStore.particlePool;
+    const source = pool || dataStore.particles;
     deckGl.update(
-      dataStore.particles,
+      source as any,
       dataStore.sensors,
       dataStore.heatZoneTemperature,
       dataStore.quenchDetected
@@ -57,20 +88,24 @@ watch(
 onMounted(() => {
   handleResize();
   window.addEventListener('resize', handleResize);
-  
+
   setTimeout(() => {
     deckGl.initialize();
+    const pool = dataStore.particlePool;
+    const source = pool || dataStore.particles;
     deckGl.update(
-      dataStore.particles,
+      source as any,
       dataStore.sensors,
       dataStore.heatZoneTemperature,
       dataStore.quenchDetected
     );
+    startParticleRenderLoop();
   }, 100);
 });
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize);
+  stopParticleRenderLoop();
 });
 </script>
 
@@ -103,7 +138,7 @@ onUnmounted(() => {
           color: COLORS.secondary
         }"
       >
-        粒子数: {{ dataStore.particles.length }}
+        粒子数: {{ particleCountText }}
       </div>
       <div 
         class="px-3 py-1 rounded backdrop-blur-md border text-xs"

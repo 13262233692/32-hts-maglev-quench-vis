@@ -9,8 +9,13 @@ import type {
   TimeRange,
   QuenchEvent
 } from '@/types';
+import { ParticlePool } from '@/utils/particlePool';
+import type { PoolStatistics, ParticlePoolAPI } from '@/utils/particlePool';
 
 const API_BASE = 'http://localhost:8000/api';
+const MAX_PARTICLES = 5000;
+const SUMMARY_THROTTLE_MS = 200;
+const PARTICLE_FETCH_THROTTLE_MS = 500;
 
 export const useDataStore = defineStore('data', () => {
   const sensors = ref<SensorInfo[]>([]);
@@ -26,8 +31,27 @@ export const useDataStore = defineStore('data', () => {
   const error = ref<string | null>(null);
   const heatZoneTemperature = ref(77);
 
+  const particlePool = ref<ParticlePoolAPI | null>(null);
+  const lastSummaryFetch = ref(0);
+  const lastParticleFetch = ref(0);
+  const pendingFetch = ref<Promise<void> | null>(null);
+
   const quenchDetected = computed(() => currentStats.value?.quenchDetected ?? false);
   const activeSensors = computed(() => currentStats.value?.quenchSensors ?? []);
+  const boilingIntensity = computed(() =>
+    Math.max(0, Math.min(1, (heatZoneTemperature.value - 77) / 20))
+  );
+
+  function getParticlePool(): ParticlePoolAPI {
+    if (!particlePool.value) {
+      particlePool.value = new ParticlePool(MAX_PARTICLES) as ParticlePoolAPI;
+    }
+    return particlePool.value;
+  }
+
+  function getPoolStats(): PoolStatistics {
+    return getParticlePool().getStatistics();
+  }
 
   function snakeToCamel(obj: any): any {
     if (Array.isArray(obj)) {
@@ -86,7 +110,12 @@ export const useDataStore = defineStore('data', () => {
     }
   }
 
-  async function fetchSummary(timestamp: number) {
+  async function fetchSummary(timestamp: number, force = false) {
+    const now = Date.now();
+    if (!force && now - lastSummaryFetch.value < SUMMARY_THROTTLE_MS) {
+      return;
+    }
+    lastSummaryFetch.value = now;
     try {
       const response = await axios.get(`${API_BASE}/summary`, {
         params: { timestamp }
@@ -97,7 +126,31 @@ export const useDataStore = defineStore('data', () => {
     }
   }
 
-  async function fetchParticles(timestamp: number, numParticles: number = 3000) {
+  function hydratePoolFromApi(apiParticles: ParticleState[]) {
+    const pool = getParticlePool();
+    const count = Math.min(apiParticles.length, MAX_PARTICLES);
+    pool.reset(count);
+    for (let i = 0; i < count; i++) {
+      const p = apiParticles[i];
+      pool.setParticle(
+        i,
+        p.position,
+        p.velocity,
+        p.size,
+        p.opacity,
+        p.temperature,
+        p.id
+      );
+    }
+  }
+
+  async function fetchParticles(timestamp: number, numParticles: number = 2500, force = false) {
+    const now = Date.now();
+    if (!force && now - lastParticleFetch.value < PARTICLE_FETCH_THROTTLE_MS) {
+      predictParticlesLocally(0.016);
+      return;
+    }
+    lastParticleFetch.value = now;
     try {
       const response = await axios.get(`${API_BASE}/particles`, {
         params: { timestamp, num_particles: numParticles }
@@ -105,9 +158,20 @@ export const useDataStore = defineStore('data', () => {
       const data = snakeToCamel(response.data);
       particles.value = data.particles;
       heatZoneTemperature.value = data.heatZoneTemperature;
+      hydratePoolFromApi(data.particles);
     } catch (e) {
       console.error('Failed to fetch particles:', e);
     }
+  }
+
+  function predictParticlesLocally(dt: number) {
+    const pool = getParticlePool();
+    if (pool.getActiveCount() === 0) return;
+    pool.advance(dt, boilingIntensity.value);
+  }
+
+  function advanceParticles(dt: number) {
+    predictParticlesLocally(dt);
   }
 
   async function fetchQuenchEvents(startTime: number, endTime: number) {
@@ -139,13 +203,24 @@ export const useDataStore = defineStore('data', () => {
 
   function stepForward(seconds: number = 1) {
     setCurrentTime(currentTime.value + seconds);
+    fetchSummary(currentTime.value, true);
+    fetchParticles(currentTime.value, 2500, true);
   }
 
   function stepBackward(seconds: number = 1) {
     setCurrentTime(currentTime.value - seconds);
+    fetchSummary(currentTime.value, true);
+    fetchParticles(currentTime.value, 2500, true);
+  }
+
+  function seekTo(time: number) {
+    setCurrentTime(time);
+    fetchSummary(time, true);
+    fetchParticles(time, 2500, true);
   }
 
   async function initialize() {
+    getParticlePool();
     await Promise.all([
       fetchSensors(),
       fetchTimeRange()
@@ -154,9 +229,16 @@ export const useDataStore = defineStore('data', () => {
       await Promise.all([
         fetchTimeSeries(timeRange.value.startTime, timeRange.value.endTime),
         fetchQuenchEvents(timeRange.value.startTime, timeRange.value.endTime),
-        fetchSummary(currentTime.value),
-        fetchParticles(currentTime.value)
+        fetchSummary(currentTime.value, true),
+        fetchParticles(currentTime.value, 2500, true)
       ]);
+    }
+  }
+
+  function dispose() {
+    if (particlePool.value) {
+      particlePool.value.dispose();
+      particlePool.value = null;
     }
   }
 
@@ -175,6 +257,8 @@ export const useDataStore = defineStore('data', () => {
     heatZoneTemperature,
     quenchDetected,
     activeSensors,
+    boilingIntensity,
+    particlePool,
     fetchSensors,
     fetchTimeRange,
     fetchTimeSeries,
@@ -186,6 +270,11 @@ export const useDataStore = defineStore('data', () => {
     setPlaybackSpeed,
     stepForward,
     stepBackward,
-    initialize
+    seekTo,
+    initialize,
+    getParticlePool,
+    getPoolStats,
+    advanceParticles,
+    dispose
   };
 });
